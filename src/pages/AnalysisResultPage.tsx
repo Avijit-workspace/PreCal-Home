@@ -1,75 +1,215 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Download, Save, Plus, Users, Edit2, ChevronDown, ChevronUp,
-  Calendar, Tag, MapPin, Sparkles, Info, CheckCircle, Printer
+  Calendar, Tag, Sparkles, Info, CheckCircle, Printer,
+  Check, ChevronRight, Palette, Wand2,
 } from 'lucide-react';
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
 import { useAnalysis, useProjects, useToast, useLang } from '../context/AppContext';
+import { WallColorVisualizer } from '../components/WallColorVisualizer';
 import type { DesignRecommendation, MaterialItem, BudgetBreakdown } from '../types';
 
-// ---- Color Swatch ----
-const ColorSwatch: React.FC<{ hex: string; name: string; size?: 'sm' | 'lg' }> = ({ hex, name, size = 'sm' }) => (
-  <div className="flex flex-col items-center gap-1">
+/* ─────────────────────────────────────────────────────────────
+   Clickable Color Swatch
+───────────────────────────────────────────────────────────── */
+interface SwatchProps {
+  hex: string;
+  name: string;
+  size?: 'sm' | 'lg';
+  active?: boolean;
+  onClick?: () => void;
+}
+const ColorSwatch: React.FC<SwatchProps> = ({ hex, name, size = 'sm', active, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    title={`Apply ${name} (${hex})`}
+    className={`flex flex-col items-center gap-1 p-1.5 rounded-xl transition-all duration-200 ${
+      onClick ? 'cursor-pointer hover:scale-110' : 'cursor-default'
+    } ${active ? 'ring-2 ring-sage-500 bg-sage-50' : ''}`}
+  >
     <div
-      className={`rounded-xl border border-warm-100 shadow-sm ${size === 'lg' ? 'w-14 h-14' : 'w-10 h-10'}`}
+      className={`rounded-xl border shadow-sm transition-transform ${
+        size === 'lg' ? 'w-14 h-14' : 'w-10 h-10'
+      } ${active ? 'border-sage-400' : 'border-warm-100'}`}
       style={{ backgroundColor: hex }}
     />
-    <span className="text-[10px] text-charcoal-700 opacity-70 text-center leading-tight max-w-[48px]">{name}</span>
+    <span className="text-[10px] text-charcoal-700 opacity-70 text-center leading-tight max-w-[52px]">{name}</span>
     <span className="text-[9px] text-gray-400 font-mono">{hex}</span>
-  </div>
+    {active && <span className="text-[8px] bg-sage-600 text-white font-bold px-1.5 rounded-full">✓</span>}
+  </button>
 );
 
-// ---- Recommendation Card ----
-const RecommendationCard: React.FC<{ rec: DesignRecommendation; i: number }> = ({ rec, i }) => {
-  const labelColor = rec.label === 'Recommended'
-    ? 'badge-green'
-    : rec.label === 'Alternative 1'
-    ? 'badge-blue'
-    : 'bg-purple-50 text-purple-700 badge';
+/* ─────────────────────────────────────────────────────────────
+   Recommendation Card — fully interactive
+───────────────────────────────────────────────────────────── */
+interface RecCardProps {
+  rec: DesignRecommendation;
+  i: number;
+  isSelected: boolean;
+  activeHex: string | null;
+  hasImage: boolean;
+  onSelect: () => void;
+  onColorPick: (hex: string, name: string) => void;
+}
+
+const RecommendationCard: React.FC<RecCardProps> = ({
+  rec, i, isSelected, activeHex, hasImage, onSelect, onColorPick,
+}) => {
+  const [expanded, setExpanded] = useState(i === 0);
+
+  const labelColor =
+    rec.label === 'Recommended'
+      ? 'badge-green'
+      : rec.label === 'Alternative 1'
+      ? 'badge-blue'
+      : 'bg-purple-50 text-purple-700 badge';
+
+  const isPrimaryActive =
+    rec.primaryColorHex &&
+    activeHex?.toUpperCase() === rec.primaryColorHex.toUpperCase();
 
   return (
-    <div className={`card p-5 ${i === 0 ? 'ring-2 ring-sage-500' : ''}`}>
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <h4 className="font-display font-semibold text-charcoal-800">{rec.title}</h4>
-        <span className={labelColor}>{rec.label}</span>
-      </div>
-      <p className="text-sm text-charcoal-700 opacity-70 leading-relaxed mb-4">{rec.description}</p>
-
-      {/* Colors */}
-      {rec.primaryColorHex && (
-        <div className="mb-4">
-          <p className="text-xs font-semibold text-charcoal-700 mb-2">Colour Palette</p>
-          <div className="flex gap-3 flex-wrap">
+    <div
+      className={`card transition-all duration-300 overflow-hidden ${
+        isSelected
+          ? 'ring-2 ring-sage-500 shadow-card-hover'
+          : 'hover:shadow-card-hover hover:-translate-y-0.5'
+      }`}
+    >
+      {/* ── Card Header – always visible, click to select ── */}
+      <button
+        type="button"
+        className="w-full text-left p-5 focus:outline-none"
+        onClick={() => { onSelect(); setExpanded(true); }}
+        aria-pressed={isSelected}
+      >
+        <div className="flex items-start justify-between gap-3 mb-2">
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            {/* Color dot preview */}
             {rec.primaryColorHex && (
-              <ColorSwatch hex={rec.primaryColorHex} name={rec.primaryColor || 'Primary'} size="lg" />
+              <div
+                className="w-5 h-5 rounded-full border-2 border-white shadow-sm flex-shrink-0"
+                style={{ backgroundColor: rec.primaryColorHex }}
+              />
             )}
-            {rec.complementaryColors?.map(c => (
-              <ColorSwatch key={c.hex} hex={c.hex} name={c.name} />
-            ))}
+            <h4 className="font-display font-semibold text-charcoal-800 truncate">{rec.title}</h4>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className={labelColor}>{rec.label}</span>
+            {isSelected && (
+              <span className="inline-flex items-center gap-1 text-[10px] bg-sage-600 text-white font-bold px-2 py-0.5 rounded-full">
+                <Check className="w-2.5 h-2.5" /> Active
+              </span>
+            )}
           </div>
         </div>
-      )}
+        <p className="text-sm text-charcoal-700 opacity-70 leading-relaxed line-clamp-2">{rec.description}</p>
+      </button>
 
-      {/* Details */}
-      <div className="flex flex-wrap gap-2">
-        {rec.finish && (
-          <span className="text-xs bg-cream-100 text-charcoal-700 px-2.5 py-1 rounded-full">Finish: {rec.finish}</span>
+      {/* ── Expandable body ── */}
+      <div>
+        {/* Toggle expand */}
+        <button
+          type="button"
+          onClick={() => setExpanded(e => !e)}
+          className="w-full flex items-center justify-between px-5 py-2 text-xs text-sage-600 font-semibold hover:bg-sage-50 transition-colors border-t border-warm-50"
+        >
+          <span>{expanded ? 'Hide Details' : 'Show Details & Colours'}</span>
+          {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+        </button>
+
+        {expanded && (
+          <div className="px-5 pb-5 pt-3 space-y-4 animate-slide-up">
+            {/* Full description when expanded */}
+            <p className="text-sm text-charcoal-700 opacity-80 leading-relaxed">{rec.description}</p>
+
+            {/* Colour palette */}
+            {rec.primaryColorHex && (
+              <div>
+                <p className="text-xs font-semibold text-charcoal-700 mb-2 flex items-center gap-1.5">
+                  <Palette className="w-3.5 h-3.5 text-sage-600" />
+                  Colour Palette
+                  {hasImage && (
+                    <span className="text-[10px] text-charcoal-700 opacity-50 font-normal">
+                      · click a swatch to preview on your wall
+                    </span>
+                  )}
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  {/* Primary color */}
+                  <ColorSwatch
+                    hex={rec.primaryColorHex}
+                    name={rec.primaryColor || 'Primary'}
+                    size="lg"
+                    active={!!(activeHex && activeHex.toUpperCase() === rec.primaryColorHex.toUpperCase())}
+                    onClick={hasImage ? () => onColorPick(rec.primaryColorHex!, rec.primaryColor || rec.title) : undefined}
+                  />
+                  {/* Complementary colors */}
+                  {rec.complementaryColors?.map(c => (
+                    <ColorSwatch
+                      key={c.hex}
+                      hex={c.hex}
+                      name={c.name}
+                      active={!!(activeHex && activeHex.toUpperCase() === c.hex.toUpperCase())}
+                      onClick={hasImage ? () => onColorPick(c.hex, c.name) : undefined}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Finish / Material tags */}
+            <div className="flex flex-wrap gap-2">
+              {rec.finish && (
+                <span className="text-xs bg-cream-100 text-charcoal-700 px-2.5 py-1 rounded-full">
+                  Finish: {rec.finish}
+                </span>
+              )}
+              {rec.material && (
+                <span className="text-xs bg-cream-100 text-charcoal-700 px-2.5 py-1 rounded-full">
+                  Material: {rec.material}
+                </span>
+              )}
+              {rec.tags.map(tag => (
+                <span key={tag} className="badge badge-green !text-[10px]">{tag}</span>
+              ))}
+            </div>
+
+            {/* CTA: Apply primary color to wall */}
+            {rec.primaryColorHex && hasImage && (
+              <button
+                type="button"
+                onClick={() => {
+                  onSelect();
+                  onColorPick(rec.primaryColorHex!, rec.primaryColor || rec.title);
+                }}
+                className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${
+                  isPrimaryActive
+                    ? 'bg-sage-600 text-white shadow-sm'
+                    : 'bg-sage-50 text-sage-700 hover:bg-sage-100 border border-sage-200'
+                }`}
+              >
+                {isPrimaryActive ? (
+                  <><Check className="w-4 h-4" /> Applied to Wall Preview</>
+                ) : (
+                  <><Wand2 className="w-4 h-4" /> Apply {rec.primaryColor || 'Colour'} to Wall</>
+                )}
+              </button>
+            )}
+          </div>
         )}
-        {rec.material && (
-          <span className="text-xs bg-cream-100 text-charcoal-700 px-2.5 py-1 rounded-full">Material: {rec.material}</span>
-        )}
-        {rec.tags.map(tag => (
-          <span key={tag} className="badge badge-green !text-[10px]">{tag}</span>
-        ))}
       </div>
     </div>
   );
 };
 
-// ---- Material Table ----
+/* ─────────────────────────────────────────────────────────────
+   Material Table
+───────────────────────────────────────────────────────────── */
 const MaterialTable: React.FC<{ items: MaterialItem[] }> = ({ items }) => {
   const total = items.reduce((s, i) => s + i.totalPrice, 0);
   return (
@@ -111,7 +251,9 @@ const MaterialTable: React.FC<{ items: MaterialItem[] }> = ({ items }) => {
   );
 };
 
-// ---- Budget Chart ----
+/* ─────────────────────────────────────────────────────────────
+   Budget Chart
+───────────────────────────────────────────────────────────── */
 const CHART_COLORS = ['#4a7c4a', '#d4a017', '#7a9bb5', '#c17f5c', '#9fbf9f'];
 const BudgetChart: React.FC<{ breakdown: BudgetBreakdown }> = ({ breakdown }) => {
   const data = [
@@ -131,22 +273,38 @@ const BudgetChart: React.FC<{ breakdown: BudgetBreakdown }> = ({ breakdown }) =>
             <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
           ))}
         </Pie>
-        <Tooltip formatter={(v: number) => fmt(v)} />
+        <Tooltip formatter={(v) => `₹${Number(v).toLocaleString('en-IN')}`} />
         <Legend iconType="circle" iconSize={8} formatter={(value) => <span className="text-xs text-charcoal-700">{value}</span>} />
       </PieChart>
     </ResponsiveContainer>
   );
 };
 
+/* ─────────────────────────────────────────────────────────────
+   Main Page
+───────────────────────────────────────────────────────────── */
 export const AnalysisResultPage: React.FC = () => {
   const { result } = useAnalysis();
-  const { saveProject, projects } = useProjects();
+  const { saveProject } = useProjects();
   const { showToast } = useToast();
   const { t } = useLang();
   const navigate = useNavigate();
+  const reportRef = useRef<HTMLDivElement>(null);
+
+  // ── Recommendation selection state ──────────────────────────
+  const [selectedRecIdx, setSelectedRecIdx] = useState<number>(0);
+  // Color actively applied to the wall visualizer from this section
+  const [activeWallHex, setActiveWallHex] = useState<string | null>(null);
+  const [activeWallName, setActiveWallName] = useState<string>('');
+
+  // ── Other UI state ───────────────────────────────────────────
   const [showDetailedCost, setShowDetailedCost] = useState(false);
   const [saved, setSaved] = useState(false);
-  const reportRef = useRef<HTMLDivElement>(null);
+
+  const handleColorPick = useCallback((hex: string, name: string) => {
+    setActiveWallHex(hex);
+    setActiveWallName(name);
+  }, []);
 
   if (!result) {
     return (
@@ -158,7 +316,10 @@ export const AnalysisResultPage: React.FC = () => {
   }
 
   const { budgetBreakdown: bd } = result;
-  const categoryLabel = result.category ? result.category.charAt(0).toUpperCase() + result.category.slice(1) : '';
+  const categoryLabel = result.category
+    ? result.category.charAt(0).toUpperCase() + result.category.slice(1)
+    : '';
+  const hasImage = !!result.imagePreviewUrl;
 
   const handleSave = () => {
     saveProject({
@@ -217,7 +378,8 @@ Generated by PreCal Home · precal.home
 
   return (
     <div ref={reportRef} className="p-6 lg:p-8 max-w-5xl mx-auto animate-fade-in space-y-8">
-      {/* Header */}
+
+      {/* ── Header ─────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
@@ -239,7 +401,7 @@ Generated by PreCal Home · precal.home
         </div>
       </div>
 
-      {/* SECTION A: Project Summary */}
+      {/* ── SECTION A: Project Summary ──────────────────────── */}
       <div className="card p-6">
         <h2 className="font-display font-semibold text-lg text-charcoal-800 mb-4 flex items-center gap-2">
           <Tag className="w-4 h-4 text-sage-600" /> Project Summary
@@ -265,23 +427,78 @@ Generated by PreCal Home · precal.home
         )}
       </div>
 
-      {/* SECTION B: Design Recommendations */}
+      {/* ── SECTION B: Compare Your Options — Wall Color Visualizer ── */}
+      {hasImage && (
+        <WallColorVisualizer
+          imageUrl={result.imagePreviewUrl!}
+          recommendations={result.recommendations}
+          category={result.category}
+          externalHex={activeWallHex}
+          externalName={activeWallName}
+        />
+      )}
+
+      {/* ── SECTION C: AI Design Recommendations ───────────── */}
       <div>
-        <h2 className="font-display font-semibold text-xl text-charcoal-800 mb-4 flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-gold-500" /> AI Design Recommendations
-        </h2>
-        <div className="flex gap-2 mb-3 p-3 bg-amber-50 rounded-xl border border-amber-100">
-          <Info className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-          <p className="text-xs text-amber-700">These are AI-generated recommendations for demonstration. Consult a professional before purchasing materials.</p>
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+          <h2 className="font-display font-semibold text-xl text-charcoal-800 flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-gold-500" /> AI Design Recommendations
+          </h2>
+          {activeWallHex && (
+            <div className="flex items-center gap-2 bg-sage-50 border border-sage-200 px-3 py-1.5 rounded-full text-xs font-semibold text-sage-700">
+              <span
+                className="w-3.5 h-3.5 rounded-full border border-sage-300 flex-shrink-0"
+                style={{ backgroundColor: activeWallHex }}
+              />
+              {activeWallName || activeWallHex} applied to wall
+            </div>
+          )}
         </div>
+
+        {/* Disclaimer */}
+        <div className="flex gap-2 mb-4 p-3 bg-amber-50 rounded-xl border border-amber-100">
+          <Info className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-700">
+            AI-generated recommendations for demonstration.
+            {hasImage
+              ? ' Click any card or swatch below to preview that colour on your uploaded photo.'
+              : ' Upload a photo in a new analysis to enable live colour preview.'}
+          </p>
+        </div>
+
+        {/* Cards grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {result.recommendations.map((rec, i) => (
-            <RecommendationCard key={i} rec={rec} i={i} />
+            <RecommendationCard
+              key={i}
+              rec={rec}
+              i={i}
+              isSelected={selectedRecIdx === i}
+              activeHex={activeWallHex}
+              hasImage={hasImage}
+              onSelect={() => setSelectedRecIdx(i)}
+              onColorPick={handleColorPick}
+            />
           ))}
         </div>
+
+        {/* No-image nudge */}
+        {!hasImage && (
+          <div className="mt-4 flex items-center justify-between flex-wrap gap-3 p-4 bg-blue-50 rounded-xl border border-blue-100">
+            <p className="text-sm text-blue-700">
+              <strong>Tip:</strong> Upload a room photo in your next analysis to unlock live wall colour preview.
+            </p>
+            <button
+              onClick={() => navigate('/analysis')}
+              className="btn-primary !text-xs !py-2 !px-4 flex-shrink-0"
+            >
+              <Plus className="w-3.5 h-3.5" /> New Analysis with Photo
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* SECTION C: BOM */}
+      {/* ── SECTION D: Bill of Materials ───────────────────── */}
       <div>
         <h2 className="font-display font-semibold text-xl text-charcoal-800 mb-4 flex items-center gap-2">
           <Printer className="w-5 h-5 text-sage-600" /> Bill of Materials (BOM)
@@ -291,22 +508,22 @@ Generated by PreCal Home · precal.home
         </div>
         <div className="mt-3 p-3 bg-blue-50 rounded-xl border border-blue-100">
           <p className="text-xs text-blue-700">
-            <strong>Note:</strong> Quantities are calculated from your measurements and rounded up to standard purchase units. Actual quantities may vary based on site conditions and workmanship. Prices are approximate market estimates.
+            <strong>Note:</strong> Quantities are calculated from your measurements and rounded up to standard
+            purchase units. Actual quantities may vary based on site conditions and workmanship.
+            Prices are approximate market estimates.
           </p>
         </div>
       </div>
 
-      {/* SECTION D: Budget Breakdown */}
+      {/* ── SECTION E: Budget Breakdown ────────────────────── */}
       <div>
         <h2 className="font-display font-semibold text-xl text-charcoal-800 mb-4 flex items-center gap-2">
           <Calendar className="w-5 h-5 text-gold-500" /> Budget Breakdown
         </h2>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Chart */}
           <div className="card p-6">
             <BudgetChart breakdown={bd} />
           </div>
-          {/* Numbers */}
           <div className="card p-6 space-y-3">
             {[
               { label: 'Material Cost', value: bd.material, color: 'bg-sage-500' },
@@ -335,7 +552,6 @@ Generated by PreCal Home · precal.home
           </div>
         </div>
 
-        {/* Expandable Detail */}
         <button
           onClick={() => setShowDetailedCost(!showDetailedCost)}
           className="mt-4 flex items-center gap-2 text-sm text-sage-600 font-medium hover:text-sage-700"
@@ -359,18 +575,14 @@ Generated by PreCal Home · precal.home
         )}
       </div>
 
-      {/* SECTION E: Actions */}
+      {/* ── SECTION F: Actions ─────────────────────────────── */}
       <div className="card p-6 bg-gradient-to-br from-sage-50 to-cream-100">
         <h3 className="font-display font-semibold text-lg text-charcoal-800 mb-2">Ready to Transform Your Space?</h3>
         <p className="text-sm text-charcoal-700 opacity-70 mb-5">
           Connect with verified local professionals for your renovation project, or save this report for later.
         </p>
         <div className="flex flex-wrap gap-3">
-          <button
-            onClick={handleDownload}
-            className="btn-secondary !text-sm"
-            id="download-report"
-          >
+          <button onClick={handleDownload} className="btn-secondary !text-sm" id="download-report">
             <Download className="w-4 h-4" /> {t('btn.downloadReport')}
           </button>
           <button
@@ -381,23 +593,16 @@ Generated by PreCal Home · precal.home
           >
             {saved ? <><CheckCircle className="w-4 h-4 text-sage-600" /> Saved!</> : <><Save className="w-4 h-4" /> {t('btn.saveProject')}</>}
           </button>
-          <button
-            onClick={() => { navigate('/analysis'); }}
-            className="btn-secondary !text-sm"
-          >
+          <button onClick={() => navigate('/analysis')} className="btn-secondary !text-sm">
             <Plus className="w-4 h-4" /> New Analysis
           </button>
-          <button
-            onClick={() => navigate('/professionals')}
-            className="btn-gold !text-sm"
-            id="book-professionals"
-          >
+          <button onClick={() => navigate('/professionals')} className="btn-gold !text-sm" id="book-professionals">
             <Users className="w-4 h-4" /> {t('btn.bookProfessionals')}
           </button>
         </div>
       </div>
 
-      {/* CTA Banner */}
+      {/* ── CTA Banner ─────────────────────────────────────── */}
       <div className="rounded-2xl bg-charcoal-900 text-white p-6 flex flex-col md:flex-row items-center justify-between gap-4">
         <div>
           <p className="font-display font-bold text-xl mb-1">Ready to Get Started?</p>
